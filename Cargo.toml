@@ -1,5 +1,5 @@
 [package]
-name = "registration_icp"
+name = "registration_icp_2d"
 version = "0.1.0"
 edition = "2021"
 
