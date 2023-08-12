@@ -30,7 +30,9 @@ pub enum Node<const D: usize, T: Scalar> {
         /// Index to elements below of this pivot.
         left: usize,
         /// Pivot coordinate, not an actual point.
-        pivot: [Option<T>; D],
+        pivot: T,
+        /// Pivot dimension,
+        dim: usize,
         /// Index to elements above or equal to this pivot.
         right: usize,
     },
@@ -48,6 +50,7 @@ struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
 
 
 impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
+
     pub fn new_quadtree(limit: usize, points: &[[T; D]], min: [T; D], max: [T; D]) -> KDTree<{D}, T> {
         assert!(D > 0);
 
@@ -109,29 +112,28 @@ impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
             }
 
             // We have work to do, determine the pivot.
-            let pivot_value = max[d].sub(min[d]).div(T::two());
-            let mut pivot = [None; D];
-            pivot[d] = Some(pivot_value);
+            let pivot = max[d].sub(min[d]).div(T::two());
 
             // Now, we need to iterate over the indices, and this dimension is split by pivot.
-            let (below, above) = partition(&indices, pivot_value, d);
+            let (below, above) = partition(&indices, pivot, d);
 
             // Update this placeholder.
             let left = nodes.len();
             let right = nodes.len() + 1;
             nodes[precursor] = Node::<{D}, T>::Split{
                 pivot,
+                dim: d,
                 left,
                 right,
             };
-            nodes.push(Node::<{D}, T>::Placeholder);
-            nodes.push(Node::<{D}, T>::Placeholder);
+            nodes.push(Node::<{D}, T>::Placeholder);  // left node
+            nodes.push(Node::<{D}, T>::Placeholder);  // right node
 
             // Dump both sides into a bin.
             if !below.is_empty() {
                 let min = min;
                 let mut max = max;
-                max[d] = pivot_value;
+                max[d] = pivot;
                 to_process.push_back(ProcessNode{
                     indices: below,
                     precursor: left,
@@ -144,7 +146,7 @@ impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
             if !above.is_empty() {
                 let mut min = min;
                 let max = max;
-                min[d] = pivot_value;
+                min[d] = pivot;
                 to_process.push_back(ProcessNode{
                     indices: above,
                     precursor: right,
@@ -159,6 +161,33 @@ impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
             nodes,
         }
     }
+
+    pub fn contains(&self, point: &[T; D]) -> bool {
+        let mut index = 0;
+        loop {
+            match &self.nodes[index] {
+                Node::<{D}, T>::Placeholder => return false,
+                Node::<{D}, T>::Split {
+                    left,
+                    right,
+                    pivot,
+                    dim,
+                } => {
+                    if point[*dim] < *pivot {
+                        index = *left;
+                    } else {
+                        index = *right;
+                    }
+                    continue;
+                }
+                Node::<{D}, T>::Points{points} => {
+                    return points.contains(point);
+                }
+            }
+            
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -166,12 +195,16 @@ mod test {
     use super::*;
     #[test]
     fn construct() {
-        let t = KDTree::<2, f32>::new_quadtree(2, &[
+        let points = [
             [0.5, 0.5],
             [0.25, 0.3],
             [0.1, 0.1],
-            ], [0.0, 0.0], [1.0, 1.0]);
+        ];
+        let t = KDTree::<2, f32>::new_quadtree(2, &points, [0.0, 0.0], [1.0, 1.0]);
         println!("{t:#?}");
+        for p in points.iter() {
+            assert_eq!(t.contains(p), true);
+        }
     }
 }
 
