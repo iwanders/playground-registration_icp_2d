@@ -37,7 +37,7 @@ pub enum Node<const D: usize, T: Scalar> {
     Points {
         points: Vec<[T; D]>, // could be a smallvec.
     },
-    Nothing
+    Placeholder
 }
 
 
@@ -46,19 +46,17 @@ struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
     nodes: Vec<Node<D, T>>,
 }
 
+
 impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
     pub fn new_quadtree(limit: usize, points: &[[T; D]], min: [T; D], max: [T; D]) -> KDTree<{D}, T> {
         assert!(D > 0);
 
-        let mut indices = (0..points.len()).collect::<Vec<_>>();
 
-        let mut d = 0;
-
-        let partition = |indices: &[usize], pivot: T| -> (Vec<usize>, Vec<usize>)  {
+        let partition = |indices: &[usize], pivot: T, dim: usize| -> (Vec<usize>, Vec<usize>)  {
             let mut below = vec![];
             let mut above = vec![];
             for i in indices.iter() {
-                if points[*i][d] < pivot {
+                if points[*i][dim] < pivot {
                     below.push(*i);
                 } else {
                     above.push(*i);
@@ -69,47 +67,91 @@ impl<const D: usize, T: Scalar+ Necessary<T>> KDTree<{D}, T> {
 
         let mut nodes = vec![];
 
-        loop {
-            let mut both_satisfied = true;
 
+        struct ProcessNode<const D: usize, T: Scalar+ Necessary<T>> {
+            indices: Vec<usize>,
+            precursor: usize,
+            dim: usize,
+            min: [T; D],
+            max: [T; D],
+        }
+
+        // We use a deque, such that we can insert in the rear and pop from the front.
+        // This ensures that we don't get a depth first tree.
+        use std::collections::VecDeque;
+        let mut to_process: VecDeque<ProcessNode<{D}, T>> = VecDeque::new();
+        to_process.push_back(ProcessNode{
+            indices: (0..points.len()).collect::<Vec<_>>(),
+            precursor: 0,
+            dim: 0,
+            min,
+            max
+        });
+        nodes.push(Node::<{D}, T>::Placeholder);
+
+
+        while !to_process.is_empty() {
+
+            // Pop the new sequence of indices to work on.
+            let v = to_process.pop_front().unwrap();
+            let d = v.dim;
+            let indices = v.indices;
+            let precursor = v.precursor;
+            let min = v.min;
+            let max = v.max;
+
+            if indices.len() < limit {
+                // No work to do, update the placeholder with the points.
+                nodes[precursor] = Node::<{D}, T>::Points {
+                    points: indices.into_iter().map(|i|{points[i]}).collect()
+                };
+                continue;
+            }
+
+            // We have work to do, determine the pivot.
             let pivot_value = max[d].sub(min[d]).div(T::two());
-            // Now, we need to iterate over the indices, and this dimension is split by pivot.
-            let (below, above) = partition(&indices, pivot_value);
-
             let mut pivot = [None; D];
             pivot[d] = Some(pivot_value);
 
+            // Now, we need to iterate over the indices, and this dimension is split by pivot.
+            let (below, above) = partition(&indices, pivot_value, d);
 
-            let node  = Node::<{D}, T>::Split {
-                left: nodes.len() + 1,
+            // Update this placeholder.
+            let left = nodes.len();
+            let right = nodes.len() + 1;
+            nodes[precursor] = Node::<{D}, T>::Split{
                 pivot,
-                right: nodes.len() + 2,
+                left,
+                right,
             };
-            nodes.push(node);
+            nodes.push(Node::<{D}, T>::Placeholder);
+            nodes.push(Node::<{D}, T>::Placeholder);
 
-            let left_node = if below.len() < limit {
-                Node::<{D}, T>::Points {
-                    points: below.iter().map(|i|{points[*i]}).collect()
-                }
-            } else {
-                both_satisfied = false;
-                Node::<{D}, T>::Nothing
-            };
+            // Dump both sides into a bin.
+            if !below.is_empty() {
+                let min = min;
+                let mut max = max;
+                max[d] = pivot_value;
+                to_process.push_back(ProcessNode{
+                    indices: below,
+                    precursor: left,
+                    dim: (d + 1) % D,
+                    min,
+                    max
+                });
+            }
 
-            nodes.push(left_node);
-            let right_node = if above.len() < limit {
-                Node::<{D}, T>::Points {
-                    points: below.iter().map(|i|{points[*i]}).collect()
-                }
-            } else {
-                both_satisfied = false;
-                Node::<{D}, T>::Nothing
-            };
-            nodes.push(right_node);
-
-
-            if both_satisfied {
-                break
+            if !above.is_empty() {
+                let mut min = min;
+                let max = max;
+                min[d] = pivot_value;
+                to_process.push_back(ProcessNode{
+                    indices: above,
+                    precursor: right,
+                    dim: (d + 1) % D,
+                    min,
+                    max
+                });
             }
         }
 
@@ -124,12 +166,12 @@ mod test {
     use super::*;
     #[test]
     fn construct() {
-        let t = KDTree::<2, f32>::new_quadtree(5, &[
+        let t = KDTree::<2, f32>::new_quadtree(2, &[
             [0.5, 0.5],
             [0.25, 0.3],
             [0.1, 0.1],
             ], [0.0, 0.0], [1.0, 1.0]);
-        println!("{t:?}");
+        println!("{t:#?}");
     }
 }
 
