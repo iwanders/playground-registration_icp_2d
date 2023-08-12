@@ -21,6 +21,8 @@ trait Necessary<T: Scalar> {
     fn div(&self, other: T) -> T;
     fn sub(&self, other: T) -> T;
     fn add(&self, other: T) -> T;
+    fn MAX() -> T;
+    fn MIN() -> T;
     fn two() -> T;
 }
 impl Necessary<f32> for f32 {
@@ -35,6 +37,12 @@ impl Necessary<f32> for f32 {
     }
     fn two() -> f32 {
         2.0
+    }
+    fn MAX() -> f32 {
+        f32::MAX
+    }
+    fn MIN() -> f32 {
+        f32::MIN
     }
 }
 
@@ -241,6 +249,46 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         }
         false
     }
+
+    pub fn nearest(&self, point: &[T; D]) -> Option<[T; D]> {
+        // Well... smarts :grimacing:
+
+        let mut lower_bound = [T::MAX(); D];
+        let mut upper_bound = [T::MIN(); D];
+        let mut best: Option<[T; D]> = None;
+
+        let NN = |n: usize, min: [T; D], max: [T; D]| {
+            
+        };
+
+        use std::collections::VecDeque;
+        let mut indices = VecDeque::new();
+        indices.push_back(0);
+        let mut best = None;
+        while let Some(index) = indices.pop_front() {
+            match &self.nodes[index] {
+                Node::<{ D }, T>::Placeholder => {continue},
+                Node::<{ D }, T>::Split {
+                    left,
+                    right,
+                    pivot,
+                    dim,
+                } => {
+                    // Here, we need to determine if either index can yield a closer result.
+                    if point[*dim] < *pivot {
+                        // index = *left;
+                    } else {
+                        // index = *right;
+                    }
+                    continue;
+                }
+                Node::<{ D }, T>::Points { points } => {
+                    // return points.contains(point);
+                }
+            }
+        }
+        best
+    }
 }
 
 #[cfg(test)]
@@ -262,47 +310,13 @@ mod test {
 
     #[test]
     fn test_fixed_construct_2d_f32() {
-        let points = [
-            [0.38223928, 0.35961717],
-            [0.011455476, 0.49527],
-            [0.020565212, 0.85724735],
-            [0.84550875, 0.29488564],
-            [0.07423377, 0.31452203],
-            [0.066070974, 0.104222596],
-            [0.09381217, 0.06578922],
-            [0.4003474, 0.62607],
-            [0.11451006, 0.3271203],
-            [0.40310985, 0.27699465],
-            [0.13055545, 0.040342987],
-            [0.2733367, 0.434321],
-            [0.3780135, 0.13583922],
-            [0.6477326, 0.9097044],
-            [0.044103086, 0.2502429],
-            [0.38766545, 0.3526219],
-            [0.8611653, 0.8734964],
-            [0.20379591, 0.51204795],
-            [0.16359204, 0.71176416],
-            [0.18152481, 0.56403023],
-            [0.29694504, 0.3452716],
-            [0.056833565, 0.03334576],
-            [0.18193924, 0.21426392],
-            [0.16607064, 0.24505132],
-            [0.42822498, 0.58666754],
-            [0.5212066, 0.7911238],
-            [0.13704151, 0.02528733],
-            [0.77074486, 0.7296772],
-            [0.49131805, 0.30820596],
-            [0.6398218, 0.6093775],
-            [0.7529851, 0.013113797],
-            [0.40955508, 0.92294186],
-            [0.77238345, 0.41256005],
-            [0.28462082, 0.7052928],
-            [0.9053682, 0.81027925],
-            [0.23959309, 0.81421494],
-            [0.5918593, 0.76235086],
-            [0.4959036, 0.6610549],
-            [0.7556707, 0.6416542],
-        ];
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
+
+        let points = (0..37)
+            .into_iter()
+            .map(|_| [rng.gen::<f32>(), rng.gen::<f32>()])
+            .collect::<Vec<_>>();
+
         let mut lower_bound = [f32::MAX, f32::MAX];
         let mut upper_bound = [f32::MIN, f32::MIN];
         for [x, y] in points.iter() {
