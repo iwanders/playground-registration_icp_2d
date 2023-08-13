@@ -3,7 +3,6 @@
 
     - Fast-ish.
     - No need for delete or insert.
-    - Can start with creating the tree like a quadtree.
 */
 
 pub trait Scalar: std::cmp::PartialOrd + Default + std::marker::Copy + std::fmt::Debug {}
@@ -51,8 +50,8 @@ pub enum Node<const D: usize, T: Scalar> {
     Split {
         /// Index to elements below of this pivot.
         left: usize,
-        /// Pivot coordinate, not an actual point.
-        pivot: T,
+        /// Pivot coordinate, an actual point.
+        pivot: [T; D],
         /// Pivot dimension,
         dim: usize,
         /// Index to elements above or equal to this pivot.
@@ -70,50 +69,46 @@ struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
 }
 
 impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
-    pub fn new_quadtree(
-        limit: usize,
-        points: &[[T; D]],
-        min: [T; D],
-        max: [T; D],
-    ) -> KDTree<{ D }, T> {
+    pub fn from(limit: usize, points: &[[T; D]]) -> Self {
         assert!(D > 0);
 
-        let partition = |indices: &[usize], pivot: T, dim: usize| -> (Vec<usize>, Vec<usize>) {
-            let mut below = vec![];
-            let mut above = vec![];
-            for i in indices.iter() {
-                if points[*i][dim] < pivot {
-                    below.push(*i);
-                } else {
-                    above.push(*i);
-                }
-            }
-            (below, above)
+        let partition = |indices: &[usize], dim: usize| -> ([T; D], Vec<usize>, Vec<usize>) {
+            let mut indices = indices.to_vec();
+            indices.sort_by(|a, b| points[*a][dim].partial_cmp(&points[*b][dim]).unwrap());
+
+            // We don't want the median, because the median gives us headaches in our search as there may be points with an identical coordinate
+            // on either side of the median. So we start with the median value, then determine the partition index based on that.
+            let partition_point = points[indices[indices.len() / 2]];
+            let up_to = indices.partition_point(|&i| points[i][dim] < partition_point[dim]);
+            let final_partition_point = points[indices[up_to]];
+            let below = indices[..up_to].to_vec();
+            let above = indices[up_to..].to_vec();
+            // println!();
+            // println!("final_partition_point: {final_partition_point:?}, partition_point_start: {partition_point:?} indices: {indices:?}   {below:?}, {above:?}, dim : {dim}");
+            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>());
+            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>());
+            (final_partition_point, below, above)
         };
 
         let mut nodes = vec![];
 
         #[derive(Debug)]
-        struct ProcessNode<const D: usize, T: Scalar + Necessary<T>> {
+        struct ProcessNode {
             indices: Vec<usize>,
             precursor: usize,
             dim: usize,
-            min: [T; D],
-            max: [T; D],
         }
 
         // We use a deque, such that we can insert in the rear and pop from the front.
         // This ensures that we don't get a depth first tree.
         use std::collections::VecDeque;
-        let mut to_process: VecDeque<ProcessNode<{ D }, T>> = VecDeque::new();
+        let mut to_process: VecDeque<ProcessNode> = VecDeque::new();
         to_process.push_back(ProcessNode {
             indices: (0..points.len()).collect::<Vec<_>>(),
             precursor: 0,
             dim: 0,
-            min,
-            max,
         });
-        nodes.push(Node::<{ D }, T>::Placeholder);
+        nodes.push(Node::Placeholder);
 
         while !to_process.is_empty() {
             // Pop the new sequence of indices to work on.
@@ -121,99 +116,54 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             let d = v.dim;
             let indices = v.indices;
             let precursor = v.precursor;
-            let min = v.min;
-            let max = v.max;
 
             if indices.len() <= limit {
                 // No work to do, update the placeholder with the points.
-                nodes[precursor] = Node::<{ D }, T>::Points {
+                nodes[precursor] = Node::Points {
                     points: indices.into_iter().map(|i| points[i]).collect(),
                 };
                 continue;
             }
 
-            // We have work to do, determine the pivot.
-            let pivot = max[d].sub(min[d]).div(T::two()).add(min[d]);
-
             // Now, we need to iterate over the indices, and this dimension is split by pivot.
-            let (below, above) = partition(&indices, pivot, d);
-            let below_min = min;
-            let mut below_max = max;
-            below_max[d] = pivot;
-
-            let mut above_min = min;
-            let above_max = max;
-            above_min[d] = pivot;
-
-            // This is an optimisation here, it avoids placeholders in the list by reusing the
-            // previous split if one group is empty, still bisecting the range though.
-            if below.is_empty() || above.is_empty() {
-                let (container, (min, max)) = if below.is_empty() {
-                    (above, (above_min, above_max))
-                } else {
-                    (below, (below_min, below_max))
-                };
-                // Push back to the work queue to split in the other direction.
-                to_process.push_back(ProcessNode {
-                    indices: container,
-                    precursor: precursor,
-                    dim: (d + 1) % D,
-                    min,
-                    max,
-                });
-                continue;
-            }
+            let (pivot, below, above) = partition(&indices, d);
 
             // Update this placeholder.
-            let left = if below.is_empty() {
-                // don't do anything.
-                // Insert placeholder.
-                nodes.push(Node::<{ D }, T>::Placeholder); // left node
-                nodes.len() - 1
-            } else if below.len() < limit {
+            let left = if below.len() <= limit {
                 // Drop the points into a container.
-                nodes.push(Node::<{ D }, T>::Points {
+                nodes.push(Node::Points {
                     points: below.into_iter().map(|i| points[i]).collect(),
                 });
                 nodes.len() - 1
             } else {
                 let left = nodes.len();
-                nodes.push(Node::<{ D }, T>::Placeholder); // left node
+                nodes.push(Node::Placeholder); // left node
                 to_process.push_back(ProcessNode {
                     indices: below,
                     precursor: left,
                     dim: (d + 1) % D,
-                    min: below_min,
-                    max: below_max,
                 });
                 left
             };
 
-            let right = if above.is_empty() {
-                // don't do anything.
-                // Insert placeholder.
-                nodes.push(Node::<{ D }, T>::Placeholder); // left node
-                nodes.len() - 1
-            } else if above.len() < limit {
+            let right = if above.len() <= limit {
                 // Drop the points into a container.
-                nodes.push(Node::<{ D }, T>::Points {
+                nodes.push(Node::Points {
                     points: above.into_iter().map(|i| points[i]).collect(),
                 });
                 nodes.len() - 1
             } else {
                 let right = nodes.len();
-                nodes.push(Node::<{ D }, T>::Placeholder); // left node
+                nodes.push(Node::Placeholder); // left node
                 to_process.push_back(ProcessNode {
                     indices: above,
                     precursor: right,
                     dim: (d + 1) % D,
-                    min: above_min,
-                    max: above_max,
                 });
                 right
             };
 
-            nodes[precursor] = Node::<{ D }, T>::Split {
+            nodes[precursor] = Node::Split {
                 pivot,
                 dim: d,
                 left,
@@ -235,12 +185,15 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     pivot,
                     dim,
                 } => {
-                    if point[*dim] < *pivot {
+                    // println!("index: {index}, dim: {dim}, point {point:?}, pivot: {pivot:?}");
+                    if pivot == point {
+                        return true;
+                    }
+                    if point[*dim] < pivot[*dim] {
                         index = *left;
                     } else {
                         index = *right;
                     }
-                    continue;
                 }
                 Node::<{ D }, T>::Points { points } => {
                     return points.contains(point);
@@ -249,7 +202,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         }
         false
     }
-
+    /*
     pub fn nearest(&self, point: &[T; D]) -> Option<[T; D]> {
         // Well... smarts :grimacing:
 
@@ -258,7 +211,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         let mut best: Option<[T; D]> = None;
 
         let NN = |n: usize, min: [T; D], max: [T; D]| {
-            
+
         };
 
         use std::collections::VecDeque;
@@ -275,20 +228,21 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     dim,
                 } => {
                     // Here, we need to determine if either index can yield a closer result.
-                    if point[*dim] < *pivot {
+                    // if point[*dim] < *pivot {
                         // index = *left;
-                    } else {
+                    // } else {
                         // index = *right;
-                    }
+                    // }
                     continue;
                 }
                 Node::<{ D }, T>::Points { points } => {
-                    // return points.contains(point);
+                    return points.contains(point);
                 }
             }
         }
         best
     }
+    */
 }
 
 #[cfg(test)]
@@ -301,9 +255,11 @@ mod test {
     use rand_xoshiro::Xoshiro256PlusPlus;
     #[test]
     fn test_construct() {
-        let points = [[0.5, 0.5], [0.25, 0.3], [0.1, 0.1]];
-        let t = KDTree::<2, f32>::new_quadtree(2, &points, [0.0, 0.0], [1.0, 1.0]);
+        let points = [[0.5, 0.5], [0.25, 0.3], [0.1, 0.1], [0.1, 0.5]];
+        let t = KDTree::<2, f32>::from(1, &points);
+        println!("{t:#?}");
         for p in points.iter() {
+            println!("Testing {p:?}");
             assert_eq!(t.contains(p), true);
         }
     }
@@ -312,7 +268,7 @@ mod test {
     fn test_fixed_construct_2d_f32() {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
 
-        let points = (0..37)
+        let points = (0..10)
             .into_iter()
             .map(|_| [rng.gen::<f32>(), rng.gen::<f32>()])
             .collect::<Vec<_>>();
@@ -326,8 +282,13 @@ mod test {
             upper_bound[1] = upper_bound[1].max(*y);
         }
 
-        let t = KDTree::new_quadtree(10, &points, lower_bound, upper_bound);
-        println!("{t:?}");
+        let t = KDTree::from(3, &points);
+        println!("{t:#?}");
+        // Check if all points present.
+        for p in points.iter() {
+            println!("Testing {p:?}");
+            assert!(t.contains(p));
+        }
     }
 
     #[test]
@@ -352,7 +313,7 @@ mod test {
                 upper_bound[1] = upper_bound[1].max(*y);
             }
 
-            let t = KDTree::new_quadtree(point_limit, &points, lower_bound, upper_bound);
+            let t = KDTree::from(point_limit, &points);
 
             // Check if all points present.
             for p in points.iter() {
