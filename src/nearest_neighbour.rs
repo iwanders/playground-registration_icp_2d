@@ -20,6 +20,10 @@ trait Necessary<T: Scalar> {
     fn div(&self, other: T) -> T;
     fn sub(&self, other: T) -> T;
     fn add(&self, other: T) -> T;
+    fn mult(&self, other: T) -> T;
+    fn min(&self, other: T) -> T;
+    fn max(&self, other: T) -> T;
+    // fn sqrt(&self) -> T;
     fn MAX() -> T;
     fn MIN() -> T;
     fn two() -> T;
@@ -34,6 +38,18 @@ impl Necessary<f32> for f32 {
     fn add(&self, other: f32) -> f32 {
         *self + other
     }
+    fn mult(&self, other: f32) -> f32 {
+        *self * other
+    }
+    fn min(&self, other: f32) -> f32 {
+        f32::min(*self, other)
+    }
+    fn max(&self, other: f32) -> f32 {
+        f32::max(*self, other)
+    }
+    // fn sqrt(&self) -> f32 {
+        // f32::sqrt(*self)
+    // }
     fn two() -> f32 {
         2.0
     }
@@ -62,6 +78,69 @@ pub enum Node<const D: usize, T: Scalar> {
     },
     Placeholder,
 }
+
+fn distance<const D: usize, T: Scalar + Necessary<T>>(a: &[T; D], b: &[T; D]) -> T {
+    let mut sum = T::default();
+    for d in 0..D {
+        let n = a[d].sub(b[d]);
+        let nn = n.mult(n);
+        sum = sum.add(nn);
+    }
+    sum
+}
+
+#[derive(Copy, Debug, Clone)]
+struct BoundingBox<const D: usize, T: Scalar + Necessary<T>>{
+    min: [T; D],
+    max: [T; D],
+}
+
+impl<const D: usize, T: Scalar + Necessary<T>> BoundingBox<{ D }, T> {
+    pub fn everything() -> Self {
+        BoundingBox {
+            min: [T::MIN(); D],
+            max: [T::MAX(); D],
+        }
+    }
+
+    /*
+    pub fn corner(&self, index: usize) -> [T; D] {
+        let mut corner = self.min;
+        let mut index = index;
+
+        let mut dim = 0;
+        while index != 0 {
+            if index & 1 == 0 {
+                corner[dim] = self.min[dim];
+            } else if index & 1 == 1 {
+                corner[dim] = self.max[dim];
+            }
+            dim += 1;
+            index = index >> 1;
+        }
+        corner
+    }
+    */
+
+    pub fn min_norm(&self, p: &[T; D]) -> T {
+        let mut best_point = self.min;
+        for d in 0..D {
+            best_point[d] = self.min[d].max(p[d].min(self.max[d]));
+        }
+        distance(&best_point, p)
+    }
+
+    pub fn split(&self, d: usize, value: T) -> (Self, Self) {
+        let mut left = *self;
+        let mut right = *self;
+        left.max[d] = value;
+        right.min[d] = value;
+        (left, right)
+    }
+}
+
+
+
 
 #[derive(Debug)]
 struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
@@ -224,23 +303,18 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         }
         false
     }
-    /*
-    pub fn nearest(&self, point: &[T; D]) -> Option<[T; D]> {
+    pub fn nearest(&self, search_point: &[T; D]) -> Option<[T; D]> {
         // Well... smarts :grimacing:
 
-        let mut lower_bound = [T::MAX(); D];
-        let mut upper_bound = [T::MIN(); D];
-        let mut best: Option<[T; D]> = None;
 
-        let NN = |n: usize, min: [T; D], max: [T; D]| {
-
-        };
+        let mut best_point: Option<[T; D]> = None;
+        let mut best_distance: Option<T> = None;
 
         use std::collections::VecDeque;
         let mut indices = VecDeque::new();
-        indices.push_back(0);
-        let mut best = None;
-        while let Some(index) = indices.pop_front() {
+        indices.push_back((0usize, BoundingBox::<{D}, T>::everything()));
+
+        while let Some((index, bounding_box)) = indices.pop_front() {
             match &self.nodes[index] {
                 Node::<{ D }, T>::Placeholder => {continue},
                 Node::<{ D }, T>::Split {
@@ -249,21 +323,46 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     pivot,
                     dim,
                 } => {
-                    // Here, we need to determine if either index can yield a closer result.
-                    // if point[*dim] < *pivot {
-                        // index = *left;
-                    // } else {
-                        // index = *right;
-                    // }
-                    continue;
+                    let d = distance(search_point, pivot);
+                    if let Some(current_best) = best_distance {
+                        if d < current_best {
+                            best_distance = Some(d);
+                            best_point = Some(*pivot);
+                        }
+                    } else  {
+                        best_distance = Some(d);
+                        best_point = Some(*pivot);
+                    }
+
+                    // Need to explore this split.
+                    if search_point[*dim] < pivot[*dim] {
+                        // Explore left
+                        
+
+                    } else {
+                        // Explore right.
+                    }
                 }
                 Node::<{ D }, T>::Points { points } => {
-                    return points.contains(point);
+                    // return points.contains(point);
+                    for point in points {
+                        let d = distance(search_point, point);
+                        if let Some(current_best) = best_distance {
+                            if d < current_best {
+                                best_distance = Some(d);
+                                best_point = Some(*point);
+                            }
+                        } else  {
+                            best_distance = Some(d);
+                            best_point = Some(*point);
+                        }
+                    }
                 }
             }
         }
-        best
+        best_point
     }
+    /*
     */
 }
 
@@ -275,6 +374,95 @@ mod test {
     use rand::Rng;
     use rand_xoshiro::rand_core::{RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
+
+    #[test]
+    fn test_bounding_box() {
+        {
+            let b = BoundingBox::<1, f32>::everything();
+            assert_eq!(b.min_norm(&[0.0]), 0.0);
+            let (left, right) = b.split(0, 1.0);
+            // left is [-infty, 1.0]
+            // right is [1.0, infty]
+
+            assert_eq!(left.min_norm(&[0.0]), 0.0);
+            assert_eq!(right.min_norm(&[0.0]), 1.0);
+            assert_eq!(right.min_norm(&[5.0]), 0.0);
+
+            let (left, right) = right.split(0, 10.0);
+            println!("Left: {left:?}:");
+            // left is [1.0, 10.0]
+            // right is [10.0, infty]
+
+            assert_eq!(left.min_norm(&[0.0]), 1.0);
+            assert_eq!(left.min_norm(&[5.0]), 0.0);
+            assert_eq!(left.min_norm(&[10.0]), 0.0);
+            assert_eq!(left.min_norm(&[11.0]), 1.0);
+
+            assert_eq!(right.min_norm(&[5.0]), 25.0);
+            assert_eq!(right.min_norm(&[10.0]), 0.0);
+            assert_eq!(right.min_norm(&[15.0]), 0.0);
+        }
+        {
+            let b = BoundingBox::<2, f32>::everything();
+            assert_eq!(b.min_norm(&[0.0, 0.0]), 0.0);
+
+        
+            let (left_x, right_x) = b.split(0, 1.0);
+            // left_x is [-infty, 1.0]
+            // right_x is [1.0, infty]
+
+
+            let (bottom_x, top_x) = left_x.split(1, 1.0);
+            // bottom_x, x = [-infty, 1.0], y = [-infty, 1.0];
+            // top_x, x = [-infty, 1.0], y = [1.0, infty];
+            assert_eq!(bottom_x.min_norm(&[0.0, 0.0]), 0.0);
+            assert_eq!(bottom_x.min_norm(&[1.0, 1.0]), 0.0);
+
+            assert_eq!(bottom_x.min_norm(&[1.0, 2.0]), 1.0);
+            assert_eq!(bottom_x.min_norm(&[2.0, 2.0]), 1.0 + 1.0);
+            assert_eq!(bottom_x.min_norm(&[2.0, 1.0]), 1.0);
+
+            let (top_x_left, top_x_right) = top_x.split(0, -1.0);
+            // top_x_left, x = [-infty, -1.0], y = [1.0, infty];
+            // top_x_right, x = [-1.0, 1.0], y = [1.0, infty];
+            assert_eq!(top_x_left.min_norm(&[0.0, 0.0]), 1.0 + 1.0);
+            assert_eq!(top_x_left.min_norm(&[0.0, 3.0]), 1.0);
+
+            
+            assert_eq!(top_x_right.min_norm(&[-2.0, 3.0]), 1.0);
+            assert_eq!(top_x_right.min_norm(&[-1.0, 3.0]), 0.0);
+            assert_eq!(top_x_right.min_norm(&[0.0, 3.0]), 0.0);
+            assert_eq!(top_x_right.min_norm(&[1.0, 3.0]), 0.0);
+            assert_eq!(top_x_right.min_norm(&[2.0, 3.0]), 1.0);
+
+            // And the final split to give us a fully defined bounding box.
+            let (top_x_right_bottom, top_x_right_top) = top_x_right.split(1, 10.0);
+            // top_x_right_bottom, x = [-1.0, 1.0], y = [1.0, 10.0];
+            // top_x_right_top, x = [-1.0, 1.0], y = [10.0, infty];
+            assert_eq!(top_x_right_bottom.min_norm(&[0.0, 3.0]), 0.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[0.0, 9.0]), 0.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[0.5, 9.0]), 0.0);
+
+            // Check corners.
+            // Bottom left;
+            assert_eq!(top_x_right_bottom.min_norm(&[-2.0, 1.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[-1.0, 0.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[-2.0, 0.0]), 1.0 + 1.0);
+            // Bottom right.
+            assert_eq!(top_x_right_bottom.min_norm(&[2.0, 1.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[1.0, 0.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[2.0, 0.0]), 1.0 + 1.0);
+            // Top left
+            assert_eq!(top_x_right_bottom.min_norm(&[-2.0, 10.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[-1.0, 11.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[-2.0, 11.0]), 1.0 + 1.0);
+            // Top right
+            assert_eq!(top_x_right_bottom.min_norm(&[2.0, 10.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[1.0, 11.0]), 1.0);
+            assert_eq!(top_x_right_bottom.min_norm(&[2.0, 11.0]), 1.0 + 1.0);
+        }
+    }
+
     #[test]
     fn test_construct() {
         let points = [[0.5, 0.5], [0.25, 0.3], [0.1, 0.1], [0.1, 0.5], [0.1, 0.5]];
