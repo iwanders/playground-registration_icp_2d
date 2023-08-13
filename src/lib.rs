@@ -131,5 +131,8 @@ mod test {
             .unwrap();
             icp.iterate(1);
         }
+        let t = icp.transform();
+        assert!((t[0] + offset.0).abs() < 0.0001);
+        assert!((t[1] + offset.1).abs() < 0.0001);
     }
 }
