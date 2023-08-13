@@ -48,7 +48,7 @@ impl Necessary<f32> for f32 {
         f32::max(*self, other)
     }
     // fn sqrt(&self) -> f32 {
-        // f32::sqrt(*self)
+    // f32::sqrt(*self)
     // }
     fn two() -> f32 {
         2.0
@@ -90,7 +90,7 @@ fn distance<const D: usize, T: Scalar + Necessary<T>>(a: &[T; D], b: &[T; D]) ->
 }
 
 #[derive(Copy, Debug, Clone)]
-struct BoundingBox<const D: usize, T: Scalar + Necessary<T>>{
+struct BoundingBox<const D: usize, T: Scalar + Necessary<T>> {
     min: [T; D],
     max: [T; D],
 }
@@ -139,9 +139,6 @@ impl<const D: usize, T: Scalar + Necessary<T>> BoundingBox<{ D }, T> {
     }
 }
 
-
-
-
 #[derive(Debug)]
 struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
     nodes: Vec<Node<D, T>>,
@@ -152,7 +149,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         assert!(D > 0);
         if points.is_empty() {
             return KDTree {
-                nodes: vec![Node::Points{points: vec![]}]
+                nodes: vec![Node::Points { points: vec![] }],
             };
         }
 
@@ -169,8 +166,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             let above = indices[up_to..].to_vec();
             // println!();
             // println!("final_partition_point: {final_partition_point:?}, partition_point_start: {partition_point:?} indices: {indices:?}   {below:?}, {above:?}, dim : {dim}");
-            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>()); 
-            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>()); 
+            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>());
+            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>());
             (final_partition_point, below, above)
         };
 
@@ -193,8 +190,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         indices.push(sorted_indices[0]);
         for index in sorted_indices {
             let point = points[index];
-            if point  == previous {
-                continue
+            if point == previous {
+                continue;
             } else {
                 previous = point;
                 indices.push(index);
@@ -305,18 +302,20 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
     }
     pub fn nearest(&self, search_point: &[T; D]) -> Option<[T; D]> {
         // Well... smarts :grimacing:
-
-
-        let mut best_point: Option<[T; D]> = None;
-        let mut best_distance: Option<T> = None;
+        let mut best_value: Option<(T, [T; D])> = None;
 
         use std::collections::VecDeque;
         let mut indices = VecDeque::new();
-        indices.push_back((0usize, BoundingBox::<{D}, T>::everything()));
+        indices.push_back((0usize, BoundingBox::<{ D }, T>::everything()));
 
         while let Some((index, bounding_box)) = indices.pop_front() {
+            if let Some((best_distance, best_point)) = best_value.as_ref() {
+                if best_distance < &bounding_box.min_norm(search_point) {
+                    continue; // nothing to explore.
+                }
+            }
             match &self.nodes[index] {
-                Node::<{ D }, T>::Placeholder => {continue},
+                Node::<{ D }, T>::Placeholder => continue,
                 Node::<{ D }, T>::Split {
                     left,
                     right,
@@ -324,46 +323,45 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     dim,
                 } => {
                     let d = distance(search_point, pivot);
-                    if let Some(current_best) = best_distance {
+                    if let Some((current_best, current_point)) = best_value {
                         if d < current_best {
-                            best_distance = Some(d);
-                            best_point = Some(*pivot);
+                            best_value = Some((d, *pivot));
                         }
-                    } else  {
-                        best_distance = Some(d);
-                        best_point = Some(*pivot);
+                    } else {
+                        best_value = Some((d, *pivot));
                     }
 
-                    // Need to explore this split.
+                    let (left_box, right_box) = bounding_box.split(*dim, pivot[*dim]);
+                    // Need to explore this split
                     if search_point[*dim] < pivot[*dim] {
                         // Explore left
-                        
-
+                        indices.push_back((*left, left_box));
+                        indices.push_back((*right, right_box));
                     } else {
                         // Explore right.
+                        indices.push_back((*right, right_box));
+                        indices.push_back((*left, left_box));
                     }
                 }
                 Node::<{ D }, T>::Points { points } => {
                     // return points.contains(point);
                     for point in points {
                         let d = distance(search_point, point);
-                        if let Some(current_best) = best_distance {
+                        if let Some((current_best, current_point)) = best_value {
                             if d < current_best {
-                                best_distance = Some(d);
-                                best_point = Some(*point);
+                                best_value = Some((d, *point));
                             }
-                        } else  {
-                            best_distance = Some(d);
-                            best_point = Some(*point);
+                        } else {
+                            best_value = Some((d, *point));
                         }
                     }
                 }
             }
         }
-        best_point
+        best_value.map(|z| z.1)
     }
     /*
-    */
+     */
 }
 
 #[cfg(test)]
@@ -406,11 +404,9 @@ mod test {
             let b = BoundingBox::<2, f32>::everything();
             assert_eq!(b.min_norm(&[0.0, 0.0]), 0.0);
 
-        
             let (left_x, right_x) = b.split(0, 1.0);
             // left_x is [-infty, 1.0]
             // right_x is [1.0, infty]
-
 
             let (bottom_x, top_x) = left_x.split(1, 1.0);
             // bottom_x, x = [-infty, 1.0], y = [-infty, 1.0];
@@ -428,7 +424,6 @@ mod test {
             assert_eq!(top_x_left.min_norm(&[0.0, 0.0]), 1.0 + 1.0);
             assert_eq!(top_x_left.min_norm(&[0.0, 3.0]), 1.0);
 
-            
             assert_eq!(top_x_right.min_norm(&[-2.0, 3.0]), 1.0);
             assert_eq!(top_x_right.min_norm(&[-1.0, 3.0]), 0.0);
             assert_eq!(top_x_right.min_norm(&[0.0, 3.0]), 0.0);
@@ -516,7 +511,7 @@ mod test {
                 .map(|_| [rng.gen::<f32>(), rng.gen::<f32>()])
                 .collect::<Vec<_>>();
 
-            let duplicate_index =  Uniform::from(0..points.len());
+            let duplicate_index = Uniform::from(0..points.len());
             // insert some duplicates
             for _ in 0..duplicates.sample(&mut rng) {
                 // pick a point.
@@ -526,20 +521,27 @@ mod test {
                 }
             }
 
-            let mut lower_bound = [f32::MAX, f32::MAX];
-            let mut upper_bound = [f32::MIN, f32::MIN];
-            for [x, y] in points.iter() {
-                lower_bound[0] = lower_bound[0].min(*x);
-                lower_bound[1] = lower_bound[1].min(*y);
-                upper_bound[0] = upper_bound[0].max(*x);
-                upper_bound[1] = upper_bound[1].max(*y);
-            }
+            let find_nearest = |search_point: &[f32; 2]| -> [f32; 2] {
+                let mut best = points[0];
+                let mut best_distance = f32::MAX;
+                for p in points.iter() {
+                    let d = distance(p, search_point);
+                    if d < best_distance {
+                        best = *p;
+                        best_distance = d;
+                    }
+                }
+                best
+            };
 
             let t = KDTree::from(point_limit, &points);
 
             // Check if all points present.
             for p in points.iter() {
                 assert!(t.contains(p));
+
+                let v = t.nearest(p);
+                assert_eq!(v, Some(*p));
             }
 
             // Check another 100 random points not in the tree.
@@ -550,6 +552,9 @@ mod test {
                     continue;
                 }
                 assert!(!t.contains(&p));
+
+                let v = t.nearest(&p);
+                assert_eq!(v, Some(find_nearest(&p)));
             }
         }
     }
