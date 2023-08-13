@@ -14,4 +14,4 @@ So, in minimal form;
 
 */
 
-mod nearest_neighbour;
+pub mod nearest_neighbour;

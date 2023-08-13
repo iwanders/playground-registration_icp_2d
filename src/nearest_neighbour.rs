@@ -16,7 +16,7 @@ impl<T> Scalar for T where
 {
 }
 
-trait Necessary<T: Scalar> {
+pub trait Necessary<T: Scalar> {
     fn div(&self, other: T) -> T;
     fn sub(&self, other: T) -> T;
     fn add(&self, other: T) -> T;
@@ -24,8 +24,8 @@ trait Necessary<T: Scalar> {
     fn min(&self, other: T) -> T;
     fn max(&self, other: T) -> T;
     // fn sqrt(&self) -> T;
-    fn MAX() -> T;
-    fn MIN() -> T;
+    fn max_value() -> T;
+    fn min_value() -> T;
     fn two() -> T;
 }
 impl Necessary<f32> for f32 {
@@ -53,16 +53,16 @@ impl Necessary<f32> for f32 {
     fn two() -> f32 {
         2.0
     }
-    fn MAX() -> f32 {
+    fn max_value() -> f32 {
         f32::MAX
     }
-    fn MIN() -> f32 {
+    fn min_value() -> f32 {
         f32::MIN
     }
 }
 
 #[derive(Debug)]
-pub enum Node<const D: usize, T: Scalar> {
+enum Node<const D: usize, T: Scalar> {
     Split {
         /// Index to elements below of this pivot.
         left: usize,
@@ -98,29 +98,10 @@ struct BoundingBox<const D: usize, T: Scalar + Necessary<T>> {
 impl<const D: usize, T: Scalar + Necessary<T>> BoundingBox<{ D }, T> {
     pub fn everything() -> Self {
         BoundingBox {
-            min: [T::MIN(); D],
-            max: [T::MAX(); D],
+            min: [T::min_value(); D],
+            max: [T::max_value(); D],
         }
     }
-
-    /*
-    pub fn corner(&self, index: usize) -> [T; D] {
-        let mut corner = self.min;
-        let mut index = index;
-
-        let mut dim = 0;
-        while index != 0 {
-            if index & 1 == 0 {
-                corner[dim] = self.min[dim];
-            } else if index & 1 == 1 {
-                corner[dim] = self.max[dim];
-            }
-            dim += 1;
-            index = index >> 1;
-        }
-        corner
-    }
-    */
 
     pub fn min_norm(&self, p: &[T; D]) -> T {
         let mut best_point = self.min;
@@ -140,7 +121,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> BoundingBox<{ D }, T> {
 }
 
 #[derive(Debug)]
-struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
+pub struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
     nodes: Vec<Node<D, T>>,
 }
 
@@ -298,8 +279,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 }
             }
         }
-        false
     }
+
     pub fn nearest(&self, search_point: &[T; D]) -> Option<[T; D]> {
         // Well... smarts :grimacing:
         let mut best_value: Option<(T, [T; D])> = None;
@@ -307,13 +288,18 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         use std::collections::VecDeque;
         let mut indices = VecDeque::new();
         indices.push_back((0usize, BoundingBox::<{ D }, T>::everything()));
+        // println!();
+        // println!();
+        // println!("Searching for {search_point:?}");
 
         while let Some((index, bounding_box)) = indices.pop_front() {
-            if let Some((best_distance, best_point)) = best_value.as_ref() {
+            if let Some((best_distance, _best_point)) = best_value.as_ref() {
                 if best_distance < &bounding_box.min_norm(search_point) {
+                    // println!("Dropping this, no need to explore.");
                     continue; // nothing to explore.
                 }
             }
+            // println!("Searching in {index:?}, bb:{bounding_box:?}");
             match &self.nodes[index] {
                 Node::<{ D }, T>::Placeholder => continue,
                 Node::<{ D }, T>::Split {
@@ -323,11 +309,13 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     dim,
                 } => {
                     let d = distance(search_point, pivot);
-                    if let Some((current_best, current_point)) = best_value {
+                    if let Some((current_best, _current_point)) = best_value {
                         if d < current_best {
+                            // println!("New best {d:?},  {pivot:?}");
                             best_value = Some((d, *pivot));
                         }
                     } else {
+                        // println!("New best {d:?},  {pivot:?}");
                         best_value = Some((d, *pivot));
                     }
 
@@ -347,11 +335,13 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     // return points.contains(point);
                     for point in points {
                         let d = distance(search_point, point);
-                        if let Some((current_best, current_point)) = best_value {
+                        if let Some((current_best, _current_point)) = best_value {
                             if d < current_best {
+                                // println!("New best {d:?},  {point:?}");
                                 best_value = Some((d, *point));
                             }
                         } else {
+                            // println!("New best {d:?},  {point:?}");
                             best_value = Some((d, *point));
                         }
                     }
@@ -368,9 +358,9 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
 mod test {
     use super::*;
 
-    use rand::distributions::{Distribution, Standard, Uniform};
+    use rand::distributions::{Distribution, Uniform};
     use rand::Rng;
-    use rand_xoshiro::rand_core::{RngCore, SeedableRng};
+    use rand_xoshiro::rand_core::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
     #[test]
@@ -405,6 +395,8 @@ mod test {
             assert_eq!(b.min_norm(&[0.0, 0.0]), 0.0);
 
             let (left_x, right_x) = b.split(0, 1.0);
+            assert_eq!(left_x.max[0], 1.0);
+            assert_eq!(right_x.min[0], 1.0);
             // left_x is [-infty, 1.0]
             // right_x is [1.0, infty]
 
@@ -432,6 +424,7 @@ mod test {
 
             // And the final split to give us a fully defined bounding box.
             let (top_x_right_bottom, top_x_right_top) = top_x_right.split(1, 10.0);
+            assert_eq!(top_x_right_top.min[1], 10.0);
             // top_x_right_bottom, x = [-1.0, 1.0], y = [1.0, 10.0];
             // top_x_right_top, x = [-1.0, 1.0], y = [10.0, infty];
             assert_eq!(top_x_right_bottom.min_norm(&[0.0, 3.0]), 0.0);
@@ -493,6 +486,7 @@ mod test {
         for p in points.iter() {
             println!("Testing {p:?}");
             assert!(t.contains(p));
+            assert_eq!(t.nearest(p), Some(*p));
         }
     }
 
