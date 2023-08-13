@@ -14,7 +14,7 @@ So, in minimal form;
 
 */
 
-pub mod nearest_neighbour;
+pub mod kdtree;
 pub mod util;
 
 pub struct IterativeClosestPoint2DTranslation {
@@ -22,7 +22,7 @@ pub struct IterativeClosestPoint2DTranslation {
     moving: Vec<[f32; 2]>,
     transform: [f32; 2], // x, y
     iteration: usize,
-    tree: nearest_neighbour::KDTree<2, f32>,
+    tree: kdtree::KDTree<2, f32>,
 }
 
 impl IterativeClosestPoint2DTranslation {
@@ -32,7 +32,7 @@ impl IterativeClosestPoint2DTranslation {
             moving: other.to_vec(),
             transform: [0.0, 0.0],
             iteration: 0,
-            tree: nearest_neighbour::KDTree::from(10, base),
+            tree: kdtree::KDTree::from(32, base),
         }
     }
 
@@ -94,7 +94,7 @@ mod test {
     fn test_icp_2d_circles() {
         // Create two circles that are offset, then fit the thing.
         let mut circle_base = vec![];
-        let elements = 20;
+        let elements = 20000;
         let radius = 1.0;
 
         let offset = (3.3, 8.8);
@@ -105,30 +105,34 @@ mod test {
                 radius * (p * 2.0 * std::f32::consts::PI).sin(),
             ]);
         }
-        println!("circle_base: {circle_base:?}");
+        // println!("circle_base: {circle_base:?}");
 
         let mut circle_two = circle_base.clone();
         for [a, b] in circle_two.iter_mut() {
             *a += offset.0;
             *b += offset.1;
         }
-        println!("circle_two: {circle_two:?}");
+        // println!("circle_two: {circle_two:?}");
 
         let mut icp = IterativeClosestPoint2DTranslation::setup(&circle_base, &circle_two);
         let min = [-5.0, -5.0];
         let max = [15.0, 15.0];
 
+        const DRAW_FRAMES: bool = false;
         for i in 0..20 {
             let t = icp.transform();
             println!("t; {t:?}");
-            util::write_clouds(
-                &format!("/tmp/circles_{i:0>2}.svg"),
-                &min,
-                &max,
-                &circle_base,
-                icp.moving(),
-            )
-            .unwrap();
+
+            if DRAW_FRAMES {
+                util::write_clouds(
+                    &format!("/tmp/circles_{i:0>2}.svg"),
+                    &min,
+                    &max,
+                    &circle_base,
+                    icp.moving(),
+                )
+                .unwrap();
+            }
             icp.iterate(1);
         }
         let t = icp.transform();
