@@ -15,6 +15,7 @@ So, in minimal form;
 */
 
 pub mod nearest_neighbour;
+pub mod util;
 
 pub struct IterativeClosestPoint2DTranslation {
     base: Vec<[f32; 2]>,
@@ -75,6 +76,9 @@ impl IterativeClosestPoint2DTranslation {
     pub fn transform(&self) -> [f32; 2] {
         self.transform
     }
+    pub fn moving(&self) -> &[[f32; 2]] {
+        &self.moving
+    }
 }
 
 #[cfg(test)]
@@ -105,9 +109,19 @@ mod test {
         println!("circle_two: {circle_two:?}");
 
         let mut icp = IterativeClosestPoint2DTranslation::setup(&circle_base, &circle_two);
+        let min = [-5.0, -5.0];
+        let max = [15.0, 15.0];
         for i in 0..20 {
             icp.iterate(1);
             let t = icp.transform();
+            util::write_clouds(
+                &format!("/tmp/circles_{i:0>2}.svg"),
+                &min,
+                &max,
+                &circle_base,
+                icp.moving(),
+            )
+            .unwrap();
             println!("t; {t:?}");
         }
     }
