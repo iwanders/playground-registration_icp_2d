@@ -40,8 +40,8 @@ impl IterativeClosestPoint2DTranslation {
         let mut transform = [0.0, 0.0];
         assert!(base.len() == other.len());
         for (b, o) in base.iter().zip(other.iter()) {
-            transform[0] += b[0] - o[0];
-            transform[1] += b[1] - o[1];
+            transform[0] += o[0] - b[0];
+            transform[1] += o[1] - b[1];
         }
         [
             transform[0] / base.len() as f32,
@@ -63,13 +63,13 @@ impl IterativeClosestPoint2DTranslation {
                 .iter()
                 .map(|z| self.tree.nearest(z).unwrap())
                 .collect::<Vec<_>>();
-            let transform = Self::determine_translation(&self.base, &closest_points);
-            println!("New closest t: {transform:?}");
+            let transform = Self::determine_translation(&self.moving, &closest_points);
             // Perform the transform.
             Self::apply_translation(&mut self.moving, transform);
             // Update the full transform.
             self.transform[0] += transform[0];
             self.transform[1] += transform[1];
+            self.iteration += 1;
         }
     }
 
@@ -78,6 +78,12 @@ impl IterativeClosestPoint2DTranslation {
     }
     pub fn moving(&self) -> &[[f32; 2]] {
         &self.moving
+    }
+    pub fn base(&self) -> &[[f32; 2]] {
+        &self.base
+    }
+    pub fn iteration(&self) -> usize {
+        self.iteration
     }
 }
 
@@ -88,7 +94,7 @@ mod test {
     fn test_icp_2d_circles() {
         // Create two circles that are offset, then fit the thing.
         let mut circle_base = vec![];
-        let elements = 100;
+        let elements = 20;
         let radius = 1.0;
 
         let offset = (3.3, 8.8);
@@ -111,9 +117,10 @@ mod test {
         let mut icp = IterativeClosestPoint2DTranslation::setup(&circle_base, &circle_two);
         let min = [-5.0, -5.0];
         let max = [15.0, 15.0];
+
         for i in 0..20 {
-            icp.iterate(1);
             let t = icp.transform();
+            println!("t; {t:?}");
             util::write_clouds(
                 &format!("/tmp/circles_{i:0>2}.svg"),
                 &min,
@@ -122,7 +129,7 @@ mod test {
                 icp.moving(),
             )
             .unwrap();
-            println!("t; {t:?}");
+            icp.iterate(1);
         }
     }
 }
