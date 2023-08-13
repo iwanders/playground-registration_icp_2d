@@ -71,6 +71,11 @@ struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
 impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
     pub fn from(limit: usize, points: &[[T; D]]) -> Self {
         assert!(D > 0);
+        if points.is_empty() {
+            return KDTree {
+                nodes: vec![Node::Points{points: vec![]}]
+            };
+        }
 
         let partition = |indices: &[usize], dim: usize| -> ([T; D], Vec<usize>, Vec<usize>) {
             let mut indices = indices.to_vec();
@@ -85,8 +90,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             let above = indices[up_to..].to_vec();
             // println!();
             // println!("final_partition_point: {final_partition_point:?}, partition_point_start: {partition_point:?} indices: {indices:?}   {below:?}, {above:?}, dim : {dim}");
-            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>());
-            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>());
+            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>()); 
+            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>()); 
             (final_partition_point, below, above)
         };
 
@@ -99,12 +104,30 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             dim: usize,
         }
 
+        // Make a list of indices, and deduplicate it.
+        let mut sorted_indices = (0..points.len()).collect::<Vec<_>>();
+        // Sort it, such that identical values are consecutive.
+        sorted_indices.sort_by(|&a, &b| points[a].partial_cmp(&points[b]).unwrap());
+        // Now, deduplicate it, this isn't the best, but we can't use dedup as we have an indirection.
+        let mut indices = Vec::<usize>::with_capacity(points.len());
+        let mut previous = points[sorted_indices[0]];
+        indices.push(sorted_indices[0]);
+        for index in sorted_indices {
+            let point = points[index];
+            if point  == previous {
+                continue
+            } else {
+                previous = point;
+                indices.push(index);
+            }
+        }
+
         // We use a deque, such that we can insert in the rear and pop from the front.
         // This ensures that we don't get a depth first tree.
         use std::collections::VecDeque;
         let mut to_process: VecDeque<ProcessNode> = VecDeque::new();
         to_process.push_back(ProcessNode {
-            indices: (0..points.len()).collect::<Vec<_>>(),
+            indices,
             precursor: 0,
             dim: 0,
         });
@@ -185,7 +208,6 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     pivot,
                     dim,
                 } => {
-                    // println!("index: {index}, dim: {dim}, point {point:?}, pivot: {pivot:?}");
                     if pivot == point {
                         return true;
                     }
@@ -255,7 +277,7 @@ mod test {
     use rand_xoshiro::Xoshiro256PlusPlus;
     #[test]
     fn test_construct() {
-        let points = [[0.5, 0.5], [0.25, 0.3], [0.1, 0.1], [0.1, 0.5]];
+        let points = [[0.5, 0.5], [0.25, 0.3], [0.1, 0.1], [0.1, 0.5], [0.1, 0.5]];
         let t = KDTree::<2, f32>::from(1, &points);
         println!("{t:#?}");
         for p in points.iter() {
@@ -296,13 +318,25 @@ mod test {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
         let count = Uniform::from(1..1000usize);
         let limit = Uniform::from(1..1000usize);
+        let duplicates = Uniform::from(1..10usize);
+        let duplicate_count = Uniform::from(1..10usize);
         for _ in 0..1000 {
             let point_count = count.sample(&mut rng);
             let point_limit = limit.sample(&mut rng);
-            let points = (0..point_count)
+            let mut points = (0..point_count)
                 .into_iter()
                 .map(|_| [rng.gen::<f32>(), rng.gen::<f32>()])
                 .collect::<Vec<_>>();
+
+            let duplicate_index =  Uniform::from(0..points.len());
+            // insert some duplicates
+            for _ in 0..duplicates.sample(&mut rng) {
+                // pick a point.
+                let index = duplicate_index.sample(&mut rng);
+                for _ in 0..duplicate_count.sample(&mut rng) {
+                    points.push(points[index]);
+                }
+            }
 
             let mut lower_bound = [f32::MAX, f32::MAX];
             let mut upper_bound = [f32::MIN, f32::MIN];
