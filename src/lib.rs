@@ -16,13 +16,12 @@ So, in minimal form;
 
 pub mod nearest_neighbour;
 
-
 pub struct IterativeClosestPoint2DTranslation {
     base: Vec<[f32; 2]>,
     moving: Vec<[f32; 2]>,
     transform: [f32; 2], // x, y
     iteration: usize,
-    tree: nearest_neighbour::KDTree::<2, f32>,
+    tree: nearest_neighbour::KDTree<2, f32>,
 }
 
 impl IterativeClosestPoint2DTranslation {
@@ -58,7 +57,11 @@ impl IterativeClosestPoint2DTranslation {
 
     pub fn iterate(&mut self, iterations: usize) {
         for _ in 0..iterations {
-            let closest_points = self.moving.iter().map(|z| self.tree.nearest(z).unwrap()).collect::<Vec<_>>();
+            let closest_points = self
+                .moving
+                .iter()
+                .map(|z| self.tree.nearest(z).unwrap())
+                .collect::<Vec<_>>();
             let transform = Self::determine_translation(&self.base, &closest_points);
             println!("New closest t: {transform:?}");
             // Perform the transform.
@@ -74,7 +77,6 @@ impl IterativeClosestPoint2DTranslation {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -88,7 +90,10 @@ mod test {
         let offset = (3.3, 8.8);
         for i in 0..elements {
             let p = (i as f32) / (elements - 1) as f32;
-            circle_base.push([radius * ( p * 2.0 * std::f32::consts::PI).cos(), radius * ( p * 2.0 * std::f32::consts::PI).sin()]);
+            circle_base.push([
+                radius * (p * 2.0 * std::f32::consts::PI).cos(),
+                radius * (p * 2.0 * std::f32::consts::PI).sin(),
+            ]);
         }
         println!("circle_base: {circle_base:?}");
 
