@@ -1,10 +1,17 @@
 /*
-    Ok, so we need something that will give us the (approximate) nearest neighbour.
+    Ok, so we need something that will give us the ~~(approximate)~~ nearest neighbour.
 
     - Fast-ish.
     - No need for delete or insert.
+
+    Approach;
+    - Create a KD-tree
+    - Terminate leafs after only 'n' points remain.
+    - Put everything into a single vector such that search aren't random memory access but instead
+      hop through memory that's close by.
 */
 
+/// Super trait that defines what a scalar must support.
 pub trait Scalar: std::cmp::PartialOrd + Default + std::marker::Copy + std::fmt::Debug {}
 impl<T> Scalar for T where
     T: std::cmp::PartialOrd
@@ -16,6 +23,7 @@ impl<T> Scalar for T where
 {
 }
 
+/// The operations we need on our scalar.
 pub trait Necessary<T: Scalar> {
     fn div(&self, other: T) -> T;
     fn sub(&self, other: T) -> T;
@@ -28,6 +36,8 @@ pub trait Necessary<T: Scalar> {
     fn min_value() -> T;
     fn two() -> T;
 }
+
+/// Implement that for f32.
 impl Necessary<f32> for f32 {
     fn div(&self, other: f32) -> f32 {
         *self / other
@@ -62,23 +72,28 @@ impl Necessary<f32> for f32 {
 }
 
 #[derive(Debug)]
+/// A node in our kdtree.
 enum Node<const D: usize, T: Scalar> {
+    /// A split in the kdtree
     Split {
         /// Index to elements below of this pivot.
         left: usize,
-        /// Pivot coordinate, an actual point.
+        /// Pivot coordinate, the point this is is duplicated in the next level.
         pivot: [T; D],
-        /// Pivot dimension,
+        /// Pivot dimension.
         dim: usize,
         /// Index to elements above or equal to this pivot.
         right: usize,
     },
+    /// Leaf in the kdtree holding actual points.
     Points {
         points: Vec<[T; D]>, // could be a smallvec.
     },
+    /// A placeholder, used during construction.
     Placeholder,
 }
 
+/// A distance function.
 fn distance<const D: usize, T: Scalar + Necessary<T>>(a: &[T; D], b: &[T; D]) -> T {
     let mut sum = T::default();
     for d in 0..D {
@@ -90,6 +105,7 @@ fn distance<const D: usize, T: Scalar + Necessary<T>>(a: &[T; D], b: &[T; D]) ->
 }
 
 #[derive(Copy, Debug, Clone)]
+/// Bounding box object necessary for the nearest neighbour search
 struct BoundingBox<const D: usize, T: Scalar + Necessary<T>> {
     min: [T; D],
     max: [T; D],
@@ -121,19 +137,23 @@ impl<const D: usize, T: Scalar + Necessary<T>> BoundingBox<{ D }, T> {
 }
 
 #[derive(Debug)]
+/// A KDTree representation of points, it deduplicates points.
 pub struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
     nodes: Vec<Node<D, T>>,
 }
 
 impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
+    /// Construct a tree from a slice of points, making leafs 'limit' size.
     pub fn from(limit: usize, points: &[[T; D]]) -> Self {
         assert!(D > 0);
+
         if points.is_empty() {
             return KDTree {
                 nodes: vec![Node::Points { points: vec![] }],
             };
         }
 
+        // Partition the current set of indices.
         let partition = |indices: &[usize], dim: usize| -> ([T; D], Vec<usize>, Vec<usize>) {
             let mut indices = indices.to_vec();
             indices.sort_by(|a, b| points[*a][dim].partial_cmp(&points[*b][dim]).unwrap());
@@ -145,16 +165,14 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             let final_partition_point = points[indices[up_to]];
             let below = indices[..up_to].to_vec();
             let above = indices[up_to..].to_vec();
-            // println!();
-            // println!("final_partition_point: {final_partition_point:?}, partition_point_start: {partition_point:?} indices: {indices:?}   {below:?}, {above:?}, dim : {dim}");
-            // println!("below: {:?}", below.iter().map(|&i| points[i]).collect::<Vec::<_>>());
-            // println!("above: {:?}", above.iter().map(|&i| points[i]).collect::<Vec::<_>>());
             (final_partition_point, below, above)
         };
 
+        // Vector that will hold the KDtree nodes, the real tree is in here.
         let mut nodes = vec![];
 
         #[derive(Debug)]
+        /// Helper struct for the nodes yet to be processed
         struct ProcessNode {
             indices: Vec<usize>,
             precursor: usize,
@@ -165,7 +183,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         let mut sorted_indices = (0..points.len()).collect::<Vec<_>>();
         // Sort it, such that identical values are consecutive.
         sorted_indices.sort_by(|&a, &b| points[a].partial_cmp(&points[b]).unwrap());
-        // Now, deduplicate it, this isn't the best, but we can't use dedup as we have an indirection.
+        // Now, deduplicate it, this isn't the best, but we can't use Vec::dedup as we have an indirection.
         let mut indices = Vec::<usize>::with_capacity(points.len());
         let mut previous = points[sorted_indices[0]];
         indices.push(sorted_indices[0]);
@@ -181,6 +199,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
 
         // We use a deque, such that we can insert in the rear and pop from the front.
         // This ensures that we don't get a depth first tree.
+        nodes.push(Node::Placeholder); // push the first placeholder node
+                                       // Push the list of ondices to work on.
         use std::collections::VecDeque;
         let mut to_process: VecDeque<ProcessNode> = VecDeque::new();
         to_process.push_back(ProcessNode {
@@ -188,11 +208,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             precursor: 0,
             dim: 0,
         });
-        nodes.push(Node::Placeholder);
 
-        while !to_process.is_empty() {
-            // Pop the new sequence of indices to work on.
-            let v = to_process.pop_front().unwrap();
+        while let Some(v) = to_process.pop_front() {
             let d = v.dim;
             let indices = v.indices;
             let precursor = v.precursor;
@@ -205,10 +222,10 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 continue;
             }
 
-            // Now, we need to iterate over the indices, and this dimension is split by pivot.
+            // Split the remaining indices for this piece of work by the dimension.
             let (pivot, below, above) = partition(&indices, d);
 
-            // Update this placeholder.
+            // Determine what to do with left.
             let left = if below.len() <= limit {
                 // Drop the points into a container.
                 nodes.push(Node::Points {
@@ -216,6 +233,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 });
                 nodes.len() - 1
             } else {
+                // Points still too large, push to the work queue.
                 let left = nodes.len();
                 nodes.push(Node::Placeholder); // left node
                 to_process.push_back(ProcessNode {
@@ -233,8 +251,9 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 });
                 nodes.len() - 1
             } else {
+                // Points still too large, push to the work queue.
                 let right = nodes.len();
-                nodes.push(Node::Placeholder); // left node
+                nodes.push(Node::Placeholder); // right node
                 to_process.push_back(ProcessNode {
                     indices: above,
                     precursor: right,
@@ -243,6 +262,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 right
             };
 
+            // Finally, update the precursor, replacing the placeholder with a split pointing to
+            // the correct nodes.
             nodes[precursor] = Node::Split {
                 pivot,
                 dim: d,
@@ -251,14 +272,15 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
             };
         }
 
-        KDTree::<{ D }, T> { nodes }
+        KDTree { nodes }
     }
 
+    /// Check if a point is contained in the tree.
     pub fn contains(&self, point: &[T; D]) -> bool {
         let mut index = 0;
         loop {
             match &self.nodes[index] {
-                Node::<{ D }, T>::Placeholder => return false,
+                Node::<{ D }, T>::Placeholder => panic!("placeholder encountered during search"),
                 Node::<{ D }, T>::Split {
                     left,
                     right,
@@ -266,7 +288,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                     dim,
                 } => {
                     if pivot == point {
-                        return true;
+                        // return true;
                     }
                     if point[*dim] < pivot[*dim] {
                         index = *left;
@@ -281,77 +303,73 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         }
     }
 
+    /// Retrieve the point nearest to a search point in the tree.
     pub fn nearest(&self, search_point: &[T; D]) -> Option<[T; D]> {
         // Well... smarts :grimacing:
         let mut best_value: Option<(T, [T; D])> = None;
 
+        let update_best = |p: &[T; D], best_value: &mut Option<(T, [T; D])>| {
+            let d = distance(search_point, p);
+            if let Some((current_best, _current_point)) = best_value {
+                if d < *current_best {
+                    *best_value = Some((d, *p));
+                }
+            } else {
+                *best_value = Some((d, *p));
+            }
+        };
+
+        // Use a container to hold which index to explore and what bounding box is associated to
+        // it.
         use std::collections::VecDeque;
         let mut indices = VecDeque::new();
-        indices.push_back((0usize, BoundingBox::<{ D }, T>::everything()));
-        // println!();
-        // println!();
-        // println!("Searching for {search_point:?}");
 
+        // Start with the first node, and the entire possible search space.
+        indices.push_back((0usize, BoundingBox::<{ D }, T>::everything()));
+
+        // Then, while there are searchable things.
         while let Some((index, bounding_box)) = indices.pop_front() {
+            // Check if this is still relevant
             if let Some((best_distance, _best_point)) = best_value.as_ref() {
                 if best_distance < &bounding_box.min_norm(search_point) {
-                    // println!("Dropping this, no need to explore.");
-                    continue; // nothing to explore.
+                    // Current is better than this bounding box can ever be, no need to explore.
+                    continue;
                 }
             }
-            // println!("Searching in {index:?}, bb:{bounding_box:?}");
+
             match &self.nodes[index] {
-                Node::<{ D }, T>::Placeholder => continue,
+                Node::<{ D }, T>::Placeholder => panic!("placeholder encountered during search"),
                 Node::<{ D }, T>::Split {
                     left,
                     right,
                     pivot,
                     dim,
                 } => {
-                    let d = distance(search_point, pivot);
-                    if let Some((current_best, _current_point)) = best_value {
-                        if d < current_best {
-                            // println!("New best {d:?},  {pivot:?}");
-                            best_value = Some((d, *pivot));
-                        }
-                    } else {
-                        // println!("New best {d:?},  {pivot:?}");
-                        best_value = Some((d, *pivot));
-                    }
+                    // Determine the distance of this pivot to the current point, update best score.
+                    update_best(pivot, &mut best_value);
 
+                    // Next, split the current bounding box and explore the most likely region.
                     let (left_box, right_box) = bounding_box.split(*dim, pivot[*dim]);
-                    // Need to explore this split
                     if search_point[*dim] < pivot[*dim] {
-                        // Explore left
+                        // Explore left first
                         indices.push_back((*left, left_box));
                         indices.push_back((*right, right_box));
                     } else {
-                        // Explore right.
+                        // Explore right first
                         indices.push_back((*right, right_box));
                         indices.push_back((*left, left_box));
                     }
                 }
                 Node::<{ D }, T>::Points { points } => {
-                    // return points.contains(point);
+                    // We found a leaf with actual points, linearly iterate through those.
                     for point in points {
-                        let d = distance(search_point, point);
-                        if let Some((current_best, _current_point)) = best_value {
-                            if d < current_best {
-                                // println!("New best {d:?},  {point:?}");
-                                best_value = Some((d, *point));
-                            }
-                        } else {
-                            // println!("New best {d:?},  {point:?}");
-                            best_value = Some((d, *point));
-                        }
+                        update_best(point, &mut best_value);
                     }
                 }
             }
         }
         best_value.map(|z| z.1)
     }
-    /*
-     */
 }
 
 #[cfg(test)]
