@@ -111,8 +111,8 @@ pub fn draw_clouds(
     let mut s = SVG::new();
     s.set_bounds(min, max);
     s.set_background("white");
-    let red_circle = s.add_point_style_circle(0.1, "red");
-    let black_cross = s.add_point_style_cross(0.1, "green");
+    let red_circle = s.add_point_style_circle(1.1, "red");
+    let black_cross = s.add_point_style_cross(1.1, "green");
 
     s.add_markers(base, black_cross);
     s.add_markers(other, red_circle);
