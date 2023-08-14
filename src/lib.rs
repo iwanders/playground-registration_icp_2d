@@ -76,6 +76,11 @@ impl IterativeClosestPoint2DTranslation {
     pub fn transform(&self) -> [f32; 2] {
         self.transform
     }
+    pub fn add_transform(&mut self, transform: [f32; 2]) {
+        self.transform[0] += transform[0];
+        self.transform[1] += transform[1];
+        Self::apply_translation(&mut self.moving, transform);
+    }
     pub fn moving(&self) -> &[[f32; 2]] {
         &self.moving
     }

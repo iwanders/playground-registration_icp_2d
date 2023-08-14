@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut icp = IterativeClosestPoint2DTranslation::setup(&cloud_base, &cloud_moving);
     let min = [0.0, 0.0];
     let max = [1920.0, 1080.0];
+    icp.add_transform([140.0, 280.0]);
 
     const DRAW_FRAMES: bool = true;
     for i in 0..20 {
