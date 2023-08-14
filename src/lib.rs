@@ -17,22 +17,26 @@ So, in minimal form;
 pub mod kdtree;
 pub mod util;
 
+use nabo::dummy_point::*;
+use nabo::KDTree;
+
 pub struct IterativeClosestPoint2DTranslation {
     base: Vec<[f32; 2]>,
     moving: Vec<[f32; 2]>,
     transform: [f32; 2], // x, y
     iteration: usize,
-    tree: kdtree::KDTree<2, f32>,
+    tree: KDTree<f32, P2>,
 }
 
 impl IterativeClosestPoint2DTranslation {
     pub fn setup(base: &[[f32; 2]], other: &[[f32; 2]]) -> Self {
+        let base_p = base.iter().map(|z| P2::new(z[0], z[1])).collect::<Vec<_>>();
         IterativeClosestPoint2DTranslation {
             base: base.to_vec(),
             moving: other.to_vec(),
             transform: [0.0, 0.0],
             iteration: 0,
-            tree: kdtree::KDTree::from(32, base),
+            tree: KDTree::new(&base_p),
         }
     }
 
@@ -61,7 +65,7 @@ impl IterativeClosestPoint2DTranslation {
             let closest_points = self
                 .moving
                 .iter()
-                .map(|z| self.tree.nearest(z).unwrap())
+                .map(|z| {let n = &self.tree.knn(1, &P2::new(z[0], z[1]))[0]; [n.point.0[0].into_inner(), n.point.0[1].into_inner()]})
                 .collect::<Vec<_>>();
             let transform = Self::determine_translation(&self.moving, &closest_points);
             // Perform the transform.

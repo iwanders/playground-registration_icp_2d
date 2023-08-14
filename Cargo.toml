@@ -6,6 +6,8 @@ license = "BSD-3-Clause"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dependencies]
+nabo = "0.3.0"
 
 [dev-dependencies]
 rand_xoshiro = "0.6.0"
