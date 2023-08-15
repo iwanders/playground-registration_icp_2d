@@ -56,14 +56,27 @@ impl IterativeClosestPoint2DTranslation {
         }
     }
 
-    pub fn iterate(&mut self, iterations: usize) {
+    pub fn iterate(&mut self, iterations: usize, max_distance: f32) {
+        let max_distance_square = max_distance * max_distance;
         for _ in 0..iterations {
             let closest_points = self
                 .moving
                 .iter()
-                .map(|z| self.tree.nearest(z).unwrap().point)
+                .map(|z| self.tree.nearest(z).unwrap())
                 .collect::<Vec<_>>();
-            let transform = Self::determine_translation(&self.moving, &closest_points);
+
+            let mut moving = vec![];
+            let mut from_base = vec![];
+            for p in self.moving.iter() {
+                if let Some(nearest) = self.tree.nearest(p) {
+                    if nearest.distance < max_distance_square {
+                        moving.push(*p);
+                        from_base.push(nearest.point);
+                    }
+                }
+            }
+
+            let transform = Self::determine_translation(&moving, &from_base);
             // Perform the transform.
             Self::apply_translation(&mut self.moving, transform);
             // Update the full transform.
@@ -138,7 +151,7 @@ mod test {
                 )
                 .unwrap();
             }
-            icp.iterate(1);
+            icp.iterate(1, f32::MAX);
         }
         let t = icp.transform();
         assert!((t[0] + offset.0).abs() < 0.0001);
