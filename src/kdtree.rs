@@ -142,6 +142,12 @@ pub struct KDTree<const D: usize, T: Scalar + Necessary<T>> {
     nodes: Vec<Node<D, T>>,
 }
 
+#[derive(Copy, Debug, Clone)]
+pub struct Nearest<const D: usize, T: Scalar + Necessary<T>> {
+    pub point: [T; D],
+    pub distance: T,
+}
+
 impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
     /// Construct a tree from a slice of points, making leafs 'limit' size.
     pub fn from(limit: usize, points: &[[T; D]]) -> Self {
@@ -304,18 +310,24 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
     }
 
     /// Retrieve the point nearest to a search point in the tree.
-    pub fn nearest(&self, search_point: &[T; D]) -> Option<[T; D]> {
+    pub fn nearest(&self, search_point: &[T; D]) -> Option<Nearest<{ D }, T>> {
         // Well... smarts :grimacing:
-        let mut best_value: Option<(T, [T; D])> = None;
+        let mut best_value: Option<Nearest<{ D }, T>> = None;
 
-        let update_best = |p: &[T; D], best_value: &mut Option<(T, [T; D])>| {
+        let update_best = |p: &[T; D], best_value: &mut Option<Nearest<{ D }, T>>| {
             let d = distance(search_point, p);
-            if let Some((current_best, _current_point)) = best_value {
-                if d < *current_best {
-                    *best_value = Some((d, *p));
+            if let Some(Nearest { distance, .. }) = best_value {
+                if d < *distance {
+                    *best_value = Some(Nearest {
+                        point: *p,
+                        distance: d,
+                    });
                 }
             } else {
-                *best_value = Some((d, *p));
+                *best_value = Some(Nearest {
+                    point: *p,
+                    distance: d,
+                });
             }
         };
 
@@ -330,8 +342,8 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
         // Then, while there are searchable things.
         while let Some((index, bounding_box)) = indices.pop_front() {
             // Check if this is still relevant
-            if let Some((best_distance, _best_point)) = best_value.as_ref() {
-                if best_distance < &bounding_box.min_norm(search_point) {
+            if let Some(Nearest { distance, .. }) = best_value {
+                if distance < bounding_box.min_norm(search_point) {
                     // Current is better than this bounding box can ever be, no need to explore.
                     continue;
                 }
@@ -368,7 +380,7 @@ impl<const D: usize, T: Scalar + Necessary<T>> KDTree<{ D }, T> {
                 }
             }
         }
-        best_value.map(|z| z.1)
+        best_value
     }
 }
 
@@ -504,7 +516,7 @@ mod test {
         for p in points.iter() {
             println!("Testing {p:?}");
             assert!(t.contains(p));
-            assert_eq!(t.nearest(p), Some(*p));
+            assert_eq!(t.nearest(p).unwrap().point, *p);
         }
     }
 
@@ -553,7 +565,7 @@ mod test {
                 assert!(t.contains(p));
 
                 let v = t.nearest(p);
-                assert_eq!(v, Some(*p));
+                assert_eq!(v.unwrap().point, *p);
             }
 
             // Check another 100 random points not in the tree.
@@ -565,8 +577,8 @@ mod test {
                 }
                 assert!(!t.contains(&p));
 
-                let v = t.nearest(&p);
-                assert_eq!(v, Some(find_nearest(&p)));
+                let v = t.nearest(&p).unwrap().point;
+                assert_eq!(v, find_nearest(&p));
             }
         }
     }

@@ -61,7 +61,7 @@ impl IterativeClosestPoint2DTranslation {
             let closest_points = self
                 .moving
                 .iter()
-                .map(|z| self.tree.nearest(z).unwrap())
+                .map(|z| self.tree.nearest(z).unwrap().point)
                 .collect::<Vec<_>>();
             let transform = Self::determine_translation(&self.moving, &closest_points);
             // Perform the transform.
